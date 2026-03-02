@@ -27,7 +27,7 @@ object Main extends ZIOAppDefault:
       allRoutes = HealthRoutes.routes ++ AdminRoutes.routes
 
       // Запускаем HTTP-сервер
-      _      <- Server.serve(allRoutes)
+      _      <- Server.serve(allRoutes.toHttpApp)
     } yield ()
 
     program.provide(
@@ -37,11 +37,6 @@ object Main extends ZIOAppDefault:
       // БД транзактор
       ZLayer.service[AppConfig].flatMap(env => ZLayer.succeed(env.get.postgres)),
       TransactorLayer.live,
-
-      // Redis
-      zio.redis.Redis.local,
-      zio.redis.RedisExecutor.local,
-      zio.redis.CodecSupplier.utf8,
 
       // Health check config
       ZLayer.service[AppConfig].flatMap(env => ZLayer.succeed(env.get.healthCheck)),

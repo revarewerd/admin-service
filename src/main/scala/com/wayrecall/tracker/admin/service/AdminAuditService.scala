@@ -3,6 +3,7 @@ package com.wayrecall.tracker.admin.service
 import com.wayrecall.tracker.admin.domain.*
 import doobie.*
 import doobie.implicits.*
+import doobie.postgres.implicits.*
 import doobie.util.transactor.Transactor
 import zio.*
 import zio.interop.catz.*

@@ -2,7 +2,6 @@ package com.wayrecall.tracker.admin.service
 
 import com.wayrecall.tracker.admin.domain.*
 import zio.*
-import zio.redis.Redis
 import zio.json.*
 import java.time.Instant
 import java.util.UUID
@@ -24,7 +23,7 @@ trait ConfigService:
   /** Обновить лимиты */
   def updateLimits(limits: Map[String, Int]): Task[Unit]
 
-final case class ConfigServiceLive(redis: Redis) extends ConfigService:
+final case class ConfigServiceLive(store: Ref[Map[String, String]]) extends ConfigService:
 
   override def getConfig: Task[SystemConfig] = for {
     features    <- getFeatureFlags
@@ -43,67 +42,68 @@ final case class ConfigServiceLive(redis: Redis) extends ConfigService:
       updatedBy = actorId
     )
     json = flag.toJson
-    _ <- redis.set(s"admin:feature:$name", json)
+    _ <- store.update(_ + (s"admin:feature:$name" -> json))
     _ <- ZIO.logInfo(s"Feature flag обновлён: $name -> enabled=${update.enabled}")
   } yield ()
 
-  override def enableMaintenanceMode(request: EnableMaintenanceRequest, actorId: UUID): Task[Unit] = for {
-    config = MaintenanceConfig(
+  override def enableMaintenanceMode(request: EnableMaintenanceRequest, actorId: UUID): Task[Unit] =
+    val config = MaintenanceConfig(
       maintenanceMode = true,
       maintenanceMessage = request.message,
       scheduledMaintenanceStart = None,
       scheduledMaintenanceEnd = None,
       allowedIps = request.allowedIps
     )
-    json = config.toJson
-    _ <- redis.set("admin:maintenance", json)
-    _ <- ZIO.logInfo(s"Режим обслуживания ВКЛЮЧЁН пользователем $actorId")
-  } yield ()
+    val json = config.toJson
+    for {
+      _ <- store.update(_ + ("admin:maintenance" -> json))
+      _ <- ZIO.logInfo(s"Режим обслуживания ВКЛЮЧЁН пользователем $actorId")
+    } yield ()
 
-  override def disableMaintenanceMode(actorId: UUID): Task[Unit] = for {
-    config = MaintenanceConfig(false, None, None, None, List.empty)
-    json = config.toJson
-    _ <- redis.set("admin:maintenance", json)
-    _ <- ZIO.logInfo(s"Режим обслуживания ВЫКЛЮЧЕН пользователем $actorId")
-  } yield ()
+  override def disableMaintenanceMode(actorId: UUID): Task[Unit] =
+    val config = MaintenanceConfig(false, None, None, None, List.empty)
+    val json = config.toJson
+    for {
+      _ <- store.update(_ + ("admin:maintenance" -> json))
+      _ <- ZIO.logInfo(s"Режим обслуживания ВЫКЛЮЧЕН пользователем $actorId")
+    } yield ()
 
   override def updateLimits(limits: Map[String, Int]): Task[Unit] =
     val json = limits.toJson
-    redis.set("admin:limits", json).unit
+    store.update(_ + ("admin:limits" -> json))
 
   // === Приватные методы ===
 
   private def getFeatureFlags: Task[Map[String, FeatureFlag]] =
-    // Получаем все ключи admin:feature:*
-    redis.keys("admin:feature:*").flatMap { keys =>
-      ZIO.foreach(keys.toList) { key =>
-        redis.get(key).returning[String].map { valueOpt =>
-          for {
-            value <- valueOpt
-            flag  <- value.fromJson[FeatureFlag].toOption
-          } yield flag.name -> flag
-        }
-      }.map(_.flatten.toMap)
-    }.catchAll(_ => ZIO.succeed(Map.empty))
+    store.get.map { data =>
+      data.collect {
+        case (key, value) if key.startsWith("admin:feature:") =>
+          value.fromJson[FeatureFlag].toOption.map(f => f.name -> f)
+      }.flatten.toMap
+    }
 
   private def getLimits: Task[Map[String, Int]] =
-    redis.get("admin:limits").returning[String].map { opt =>
-      opt.flatMap(_.fromJson[Map[String, Int]].toOption).getOrElse(
-        Map(
-          "maxConnectionsPerDevice" -> 10,
-          "maxWebSocketsPerUser" -> 5,
-          "defaultRateLimit" -> 1000
+    store.get.map { data =>
+      data.get("admin:limits")
+        .flatMap(_.fromJson[Map[String, Int]].toOption)
+        .getOrElse(
+          Map(
+            "maxConnectionsPerDevice" -> 10,
+            "maxWebSocketsPerUser" -> 5,
+            "defaultRateLimit" -> 1000
+          )
         )
-      )
-    }.catchAll(_ => ZIO.succeed(Map.empty))
+    }
 
   private def getMaintenanceConfig: Task[MaintenanceConfig] =
-    redis.get("admin:maintenance").returning[String].map { opt =>
-      opt.flatMap(_.fromJson[MaintenanceConfig].toOption).getOrElse(
-        MaintenanceConfig(false, None, None, None, List.empty)
-      )
-    }.catchAll(_ => ZIO.succeed(MaintenanceConfig(false, None, None, None, List.empty)))
+    store.get.map { data =>
+      data.get("admin:maintenance")
+        .flatMap(_.fromJson[MaintenanceConfig].toOption)
+        .getOrElse(MaintenanceConfig(false, None, None, None, List.empty))
+    }
 
 object ConfigService:
-  val live: ZLayer[Redis, Nothing, ConfigService] =
-    ZLayer.fromFunction(ConfigServiceLive(_))
+  val live: ZLayer[Any, Nothing, ConfigService] =
+    ZLayer {
+      Ref.make(Map.empty[String, String]).map(ConfigServiceLive(_))
+    }

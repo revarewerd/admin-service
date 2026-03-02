@@ -26,13 +26,11 @@ lazy val root = project
       "dev.zio" %% "zio-config-typesafe" % "4.0.0-RC16",
       "dev.zio" %% "zio-config-magnolia" % "4.0.0-RC16",
 
-      // Redis
-      "dev.zio" %% "zio-redis"           % "1.0.0-RC1",
-
       // Database (Doobie)
-      "org.tpolecat" %% "doobie-core"    % "1.0.0-RC4",
-      "org.tpolecat" %% "doobie-hikari"  % "1.0.0-RC4",
-      "dev.zio" %% "zio-interop-cats"    % "23.1.0.0",
+      "org.tpolecat" %% "doobie-core"     % "1.0.0-RC4",
+      "org.tpolecat" %% "doobie-hikari"   % "1.0.0-RC4",
+      "org.tpolecat" %% "doobie-postgres" % "1.0.0-RC4",
+      "dev.zio" %% "zio-interop-cats"     % "23.1.0.0",
 
       // PostgreSQL
       "org.postgresql" % "postgresql"     % "42.7.1",

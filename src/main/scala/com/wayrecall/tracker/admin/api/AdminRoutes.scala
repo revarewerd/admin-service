@@ -25,11 +25,11 @@ object AdminRoutes:
     // GET /api/v1/admin/companies — список компаний
     Method.GET / "api" / "v1" / "admin" / "companies" -> handler { (req: Request) =>
       val filters = CompanyFilters(
-        search = req.url.queryParams.get("search").flatMap(_.headOption),
-        isActive = req.url.queryParams.get("isActive").flatMap(_.headOption).map(_.toBoolean),
-        plan = req.url.queryParams.get("plan").flatMap(_.headOption),
-        page = req.url.queryParams.get("page").flatMap(_.headOption).flatMap(_.toIntOption).getOrElse(1),
-        pageSize = req.url.queryParams.get("pageSize").flatMap(_.headOption).flatMap(_.toIntOption).getOrElse(20)
+        search = req.url.queryParams.get("search"),
+        isActive = req.url.queryParams.get("isActive").map(_.toBoolean),
+        plan = req.url.queryParams.get("plan"),
+        page = req.url.queryParams.get("page").flatMap(_.toIntOption).getOrElse(1),
+        pageSize = req.url.queryParams.get("pageSize").flatMap(_.toIntOption).getOrElse(20)
       )
       ZIO.serviceWithZIO[CompanyAdminService](_.listCompanies(filters))
         .map(p => Response.json(p.toJson))
@@ -151,14 +151,14 @@ object AdminRoutes:
     // GET /api/v1/admin/audit — лог аудита
     Method.GET / "api" / "v1" / "admin" / "audit" -> handler { (req: Request) =>
       val filters = AdminAuditFilters(
-        companyId = req.url.queryParams.get("companyId").flatMap(_.headOption).flatMap(s => scala.util.Try(UUID.fromString(s)).toOption),
-        userId = req.url.queryParams.get("userId").flatMap(_.headOption).flatMap(s => scala.util.Try(UUID.fromString(s)).toOption),
-        action = req.url.queryParams.get("action").flatMap(_.headOption),
-        entityType = req.url.queryParams.get("entityType").flatMap(_.headOption),
-        fromDate = req.url.queryParams.get("fromDate").flatMap(_.headOption).flatMap(s => scala.util.Try(Instant.parse(s)).toOption),
-        toDate = req.url.queryParams.get("toDate").flatMap(_.headOption).flatMap(s => scala.util.Try(Instant.parse(s)).toOption),
-        page = req.url.queryParams.get("page").flatMap(_.headOption).flatMap(_.toIntOption).getOrElse(1),
-        pageSize = req.url.queryParams.get("pageSize").flatMap(_.headOption).flatMap(_.toIntOption).getOrElse(20)
+        companyId = req.url.queryParams.get("companyId").flatMap(s => scala.util.Try(UUID.fromString(s)).toOption),
+        userId = req.url.queryParams.get("userId").flatMap(s => scala.util.Try(UUID.fromString(s)).toOption),
+        action = req.url.queryParams.get("action"),
+        entityType = req.url.queryParams.get("entityType"),
+        fromDate = req.url.queryParams.get("fromDate").flatMap(s => scala.util.Try(Instant.parse(s)).toOption),
+        toDate = req.url.queryParams.get("toDate").flatMap(s => scala.util.Try(Instant.parse(s)).toOption),
+        page = req.url.queryParams.get("page").flatMap(_.toIntOption).getOrElse(1),
+        pageSize = req.url.queryParams.get("pageSize").flatMap(_.toIntOption).getOrElse(20)
       )
       ZIO.serviceWithZIO[AdminAuditService](_.getAuditLog(filters))
         .map(p => Response.json(p.toJson))
@@ -171,8 +171,8 @@ object AdminRoutes:
 
     // GET /api/v1/admin/tasks — список задач
     Method.GET / "api" / "v1" / "admin" / "tasks" -> handler { (req: Request) =>
-      val statusFilter = req.url.queryParams.get("status").flatMap(_.headOption)
-      val typeFilter   = req.url.queryParams.get("type").flatMap(_.headOption)
+      val statusFilter = req.url.queryParams.get("status")
+      val typeFilter   = req.url.queryParams.get("type")
       ZIO.serviceWithZIO[BackgroundTaskService](_.listTasks(statusFilter, typeFilter))
         .map(tasks => Response.json(tasks.toJson))
         .catchAll(handleError)

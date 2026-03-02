@@ -3,9 +3,11 @@ package com.wayrecall.tracker.admin.service
 import com.wayrecall.tracker.admin.domain.*
 import doobie.*
 import doobie.implicits.*
+import doobie.postgres.implicits.*
 import doobie.util.transactor.Transactor
 import zio.*
 import zio.interop.catz.*
+import zio.json.*
 import java.time.Instant
 import java.util.UUID
 
@@ -74,8 +76,6 @@ final case class BackgroundTaskServiceLive(xa: Transactor[Task]) extends Backgro
       VALUES ($taskId, ${taskType.toString}, 'Pending', 0, $params::jsonb, NOW(), $actorId)
     """.update.run.transact(xa).as(taskId)
 
-  // Для сериализации request в JSON
-  import zio.json.*
 
 object BackgroundTaskService:
   val live: ZLayer[Transactor[Task], Nothing, BackgroundTaskService] =

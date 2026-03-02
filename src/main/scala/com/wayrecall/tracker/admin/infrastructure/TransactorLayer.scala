@@ -20,7 +20,8 @@ object TransactorLayer:
           driverClassName = "org.postgresql.Driver",
           url             = config.url,
           user            = config.user,
-          pass            = config.password
+          pass            = config.password,
+          connectEC       = scala.concurrent.ExecutionContext.global
         ).toScopedZIO
       } yield xa
     }
