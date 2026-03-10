@@ -50,9 +50,11 @@ final case class CompanyAdminServiceLive(xa: Transactor[Task]) extends CompanyAd
     """ ++ baseWhere ++ fr"ORDER BY c.created_at DESC LIMIT ${filters.pageSize} OFFSET $offset"
 
     (for {
-      total <- countQ.query[Long].unique
-      items <- dataQ.query[CompanySummary].to[List]
-    } yield Page(total, items, filters.page, filters.pageSize)).transact(xa)
+      _     <- ZIO.logDebug(s"Запрос списка компаний: search=${filters.search}, active=${filters.isActive}, page=${filters.page}")
+      total <- countQ.query[Long].unique.transact(xa)
+      items <- dataQ.query[CompanySummary].to[List].transact(xa)
+      _     <- ZIO.logDebug(s"Загружено компаний: total=$total, returned=${items.size}")
+    } yield Page(total, items, filters.page, filters.pageSize))
 
   override def getCompanyDetails(id: UUID): Task[CompanyDetails] =
     val q = sql"""
@@ -82,50 +84,66 @@ final case class CompanyAdminServiceLive(xa: Transactor[Task]) extends CompanyAd
       .catchAll(e => ZIO.fail(AdminError.CompanyNotFound(id)))
 
   override def createCompany(request: CreateCompanyAdmin, actorId: UUID): Task[(UUID, UUID)] =
-    val companyId = UUID.randomUUID()
-    val ownerId   = UUID.randomUUID()
+    for {
+      _ <- ZIO.logInfo(s"Создание компании суперадмином: actor=$actorId, name=${request.name}, owner=${request.ownerEmail}")
+      companyId = UUID.randomUUID()
+      ownerId   = UUID.randomUUID()
 
-    val insertCompany = sql"""
-      INSERT INTO users.companies (id, name, inn, phone, email, timezone,
-                                   subscription_plan, max_vehicles, max_users, subscription_expires_at)
-      VALUES ($companyId, ${request.name}, ${request.inn}, ${request.phone}, ${request.email},
-              ${request.timezone}, ${request.subscriptionPlan},
-              ${request.maxVehicles}, ${request.maxUsers}, ${request.subscriptionExpires})
-    """.update.run
+      insertCompany = sql"""
+        INSERT INTO users.companies (id, name, inn, phone, email, timezone,
+                                     subscription_plan, max_vehicles, max_users, subscription_expires_at)
+        VALUES ($companyId, ${request.name}, ${request.inn}, ${request.phone}, ${request.email},
+                ${request.timezone}, ${request.subscriptionPlan},
+                ${request.maxVehicles}, ${request.maxUsers}, ${request.subscriptionExpires})
+      """.update.run
 
-    // Вставка владельца с временным паролем (реальная интеграция через User Service API)
-    val insertOwner = sql"""
-      INSERT INTO users.users (id, company_id, email, password_hash, first_name, last_name)
-      VALUES ($ownerId, $companyId, ${request.ownerEmail}, 'TEMP_HASH_CHANGE_ON_LOGIN',
-              ${request.ownerFirstName}, ${request.ownerLastName})
-    """.update.run
+      // Вставка владельца с временным паролем (реальная интеграция через User Service API)
+      insertOwner = sql"""
+        INSERT INTO users.users (id, company_id, email, password_hash, first_name, last_name)
+        VALUES ($ownerId, $companyId, ${request.ownerEmail}, 'TEMP_HASH_CHANGE_ON_LOGIN',
+                ${request.ownerFirstName}, ${request.ownerLastName})
+      """.update.run
 
-    // Назначаем роль company_admin
-    val assignRole = sql"""
-      INSERT INTO users.user_roles (user_id, role_id, assigned_by)
-      VALUES ($ownerId, '00000000-0000-0000-0000-000000000002'::uuid, $actorId)
-    """.update.run
+      // Назначаем роль company_admin
+      assignRole = sql"""
+        INSERT INTO users.user_roles (user_id, role_id, assigned_by)
+        VALUES ($ownerId, '00000000-0000-0000-0000-000000000002'::uuid, $actorId)
+      """.update.run
 
-    (insertCompany *> insertOwner *> assignRole).transact(xa).as((companyId, ownerId))
+      _ <- (insertCompany *> insertOwner *> assignRole).transact(xa)
+      _ <- ZIO.logInfo(s"Компания создана: companyId=$companyId, ownerId=$ownerId, plan=${request.subscriptionPlan}")
+    } yield (companyId, ownerId)
 
   override def updateSubscription(companyId: UUID, request: UpdateSubscription): Task[Unit] =
-    sql"""
-      UPDATE users.companies
-      SET subscription_plan = ${request.plan},
-          max_vehicles = ${request.maxVehicles},
-          max_users = ${request.maxUsers},
-          subscription_expires_at = ${request.expiresAt},
-          updated_at = NOW()
-      WHERE id = $companyId
-    """.update.run.transact(xa).unit
+    for {
+      _ <- ZIO.logInfo(s"Обновление подписки: company=$companyId, plan=${request.plan}, maxVehicles=${request.maxVehicles}")
+      _ <- sql"""
+        UPDATE users.companies
+        SET subscription_plan = ${request.plan},
+            max_vehicles = ${request.maxVehicles},
+            max_users = ${request.maxUsers},
+            subscription_expires_at = ${request.expiresAt},
+            updated_at = NOW()
+        WHERE id = $companyId
+      """.update.run.transact(xa)
+      _ <- ZIO.logInfo(s"Подписка обновлена: company=$companyId")
+    } yield ()
 
   override def activateCompany(companyId: UUID): Task[Unit] =
-    sql"""UPDATE users.companies SET is_active = TRUE, updated_at = NOW() WHERE id = $companyId"""
-      .update.run.transact(xa).unit
+    for {
+      _ <- ZIO.logInfo(s"Активация компании: $companyId")
+      _ <- sql"""UPDATE users.companies SET is_active = TRUE, updated_at = NOW() WHERE id = $companyId"""
+        .update.run.transact(xa)
+      _ <- ZIO.logInfo(s"Компания активирована: $companyId")
+    } yield ()
 
   override def deactivateCompany(companyId: UUID, reason: String): Task[Unit] =
-    sql"""UPDATE users.companies SET is_active = FALSE, updated_at = NOW() WHERE id = $companyId"""
-      .update.run.transact(xa).unit
+    for {
+      _ <- ZIO.logWarning(s"Деактивация компании: $companyId, причина: $reason")
+      _ <- sql"""UPDATE users.companies SET is_active = FALSE, updated_at = NOW() WHERE id = $companyId"""
+        .update.run.transact(xa)
+      _ <- ZIO.logWarning(s"Компания деактивирована: $companyId")
+    } yield ()
 
 object CompanyAdminService:
   val live: ZLayer[Transactor[Task], Nothing, CompanyAdminService] =

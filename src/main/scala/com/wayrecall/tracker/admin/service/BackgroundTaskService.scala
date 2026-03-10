@@ -59,22 +59,31 @@ final case class BackgroundTaskServiceLive(xa: Transactor[Task]) extends Backgro
       .catchAll(_ => ZIO.fail(AdminError.TaskNotFound(id)))
 
   override def cancelTask(id: UUID): Task[Unit] =
-    sql"""UPDATE admin.background_tasks SET status = 'Cancelled' WHERE id = $id AND status IN ('Pending', 'Running')"""
-      .update.run.transact(xa).unit
+    for {
+      _ <- ZIO.logWarning(s"Отмена задачи: $id")
+      _ <- sql"""UPDATE admin.background_tasks SET status = 'Cancelled' WHERE id = $id AND status IN ('Pending', 'Running')"""
+        .update.run.transact(xa)
+      _ <- ZIO.logInfo(s"Задача отменена: $id")
+    } yield ()
 
   override def scheduleCleanup(request: CleanupRequest, actorId: UUID): Task[UUID] =
+    ZIO.logInfo(s"Запланирована очистка: type=${request.cleanupType}, olderThan=${request.olderThan}, actor=$actorId") *>
     createTask(TaskType.DataCleanup, request.toJson, actorId)
 
   override def scheduleBackup(request: BackupRequest, actorId: UUID): Task[UUID] =
+    ZIO.logInfo(s"Запланирован бэкап: databases=${request.databases.mkString(",")}, s3=${request.uploadToS3}, actor=$actorId") *>
     createTask(TaskType.DatabaseBackup, request.toJson, actorId)
 
   /** Создание записи задачи в БД */
   private def createTask(taskType: TaskType, params: String, actorId: UUID): Task[UUID] =
     val taskId = UUID.randomUUID()
-    sql"""
-      INSERT INTO admin.background_tasks (id, task_type, status, progress, parameters, started_at, created_by)
-      VALUES ($taskId, ${taskType.toString}, 'Pending', 0, $params::jsonb, NOW(), $actorId)
-    """.update.run.transact(xa).as(taskId)
+    (for {
+      _ <- sql"""
+        INSERT INTO admin.background_tasks (id, task_type, status, progress, parameters, started_at, created_by)
+        VALUES ($taskId, ${taskType.toString}, 'Pending', 0, $params::jsonb, NOW(), $actorId)
+      """.update.run.transact(xa)
+      _ <- ZIO.logInfo(s"Задача создана: id=$taskId, type=$taskType, actor=$actorId")
+    } yield taskId)
 
 
 object BackgroundTaskService:

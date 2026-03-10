@@ -34,6 +34,7 @@ final case class SystemMonitorServiceLive(
   )
 
   override def getHealth: Task[SystemHealth] = for {
+    _         <- ZIO.logDebug("Запрос здоровья системы — начало опроса сервисов")
     services  <- getServicesHealth
     databases <- getDatabasesHealth
     queues    <- getQueuesHealth
@@ -47,12 +48,19 @@ final case class SystemMonitorServiceLive(
                             databases.exists(_.status == HealthStatus.Critical)
                     then HealthStatus.Critical
                     else HealthStatus.Degraded
+    _ <- ZIO.logInfo(s"Здоровье системы: status=$overallStatus, services=${services.size}, healthy=${services.count(_.status == HealthStatus.Healthy)}")
+    _ <- ZIO.when(overallStatus != HealthStatus.Healthy) {
+      val unhealthy = services.filter(_.status != HealthStatus.Healthy).map(_.name).mkString(", ")
+      ZIO.logWarning(s"Нездоровые сервисы: $unhealthy")
+    }
   } yield SystemHealth(overallStatus, services, databases, queues, now)
 
   override def getServicesHealth: Task[List[ServiceHealth]] =
+    ZIO.logDebug(s"Опрос здоровья ${serviceEndpoints.size} сервисов") *>
     ZIO.foreachPar(serviceEndpoints.toList) { case (name, url) =>
       checkServiceHealth(name, url)
         .catchAll { e =>
+          ZIO.logWarning(s"Сервис недоступен: $name ($url): ${e.getMessage}") *>
           Clock.instant.map { now =>
             ServiceHealth(name, HealthStatus.Critical, 1, 0, 0.0, 0.0, 100.0, now)
           }

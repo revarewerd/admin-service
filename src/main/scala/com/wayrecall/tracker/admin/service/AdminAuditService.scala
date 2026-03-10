@@ -50,16 +50,21 @@ final case class AdminAuditServiceLive(xa: Transactor[Task]) extends AdminAuditS
     }
 
     (for {
-      total <- countQ.query[Long].unique
-      items <- dataQ.query[AdminAuditEntry].to[List]
-    } yield Page(total, items, filters.page, filters.pageSize)).transact(xa)
+      _ <- ZIO.logDebug(s"Запрос аудит-лога: company=${filters.companyId}, user=${filters.userId}, action=${filters.action}, page=${filters.page}")
+      total <- countQ.query[Long].unique.transact(xa)
+      items <- dataQ.query[AdminAuditEntry].to[List].transact(xa)
+      _ <- ZIO.logDebug(s"Аудит-лог: total=$total, returned=${items.size}")
+    } yield Page(total, items, filters.page, filters.pageSize))
 
   override def log(actorId: UUID, action: String, entityType: String, entityId: Option[UUID],
                    details: Option[String], companyId: Option[UUID]): Task[Unit] =
-    sql"""
-      INSERT INTO admin.admin_audit_log (id, company_id, user_id, action, entity_type, entity_id, details)
-      VALUES (${UUID.randomUUID()}, $companyId, $actorId, $action, $entityType, $entityId, $details::jsonb)
-    """.update.run.transact(xa).unit
+    for {
+      _ <- ZIO.logInfo(s"Аудит: actor=$actorId, action=$action, entity=$entityType:${entityId.getOrElse("-")}, company=${companyId.getOrElse("-")}")
+      _ <- sql"""
+        INSERT INTO admin.admin_audit_log (id, company_id, user_id, action, entity_type, entity_id, details)
+        VALUES (${UUID.randomUUID()}, $companyId, $actorId, $action, $entityType, $entityId, $details::jsonb)
+      """.update.run.transact(xa)
+    } yield ()
 
 object AdminAuditService:
   val live: ZLayer[Transactor[Task], Nothing, AdminAuditService] =
